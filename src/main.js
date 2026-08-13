@@ -3,26 +3,34 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
-const PET_SIZE = { width: 330, height: 430 };
-const STEP_MS = 54;
+const BASE_WINDOW_SIZE = { width: 330, height: 430 };
+const BASE_PET_SIZE = { width: 210, height: 300 };
+const STEP_MS = 33;
+const WALK_SPEED = 24;
 let petWindow;
 let tray;
 let motionTimer;
+let dragTimer;
 let reminderTimer;
 let walking = true;
 let direction = -1;
-let paused = false;
 let dragging = false;
 let dragOffset = { x: 0, y: 0 };
-let nextDecisionAt = 0;
+let motionPhase = 'idle';
+let phaseEndsAt = 0;
+let lastMotionAt = 0;
+let preciseX = null;
 let settings = {};
-let previousResponseId = null;
+let conversationHistory = [];
 
 const defaults = {
   alwaysOnTop: true,
   launchAtLogin: false,
   walking: true,
-  model: 'gpt-5.6-luna',
+  baseUrl: 'https://api.openai.com/v1',
+  model: 'gpt-4.1-mini',
+  persona: '你是用户的桌宠月下。性格温柔、亲近、略带俏皮和占有欲，会自然地关心用户。用中文简短回复，通常不超过三句话；不要声称自己能操作没有提供的系统功能。',
+  petScale: 1,
   reminders: []
 };
 
@@ -36,6 +44,7 @@ function loadSettings() {
   } catch {
     settings = { ...defaults };
   }
+  if (settings.model === 'gpt-5.6-luna') settings.model = defaults.model;
   walking = settings.walking;
 }
 
@@ -64,20 +73,83 @@ function activeWorkArea() {
   return screen.getDisplayMatching(petWindow.getBounds()).workArea;
 }
 
+function normalizedScale(value) {
+  return Math.max(0.5, Math.min(Number(value) || 1, 1.5));
+}
+
+function windowSizeForScale(value) {
+  const scale = normalizedScale(value);
+  return {
+    width: Math.max(BASE_WINDOW_SIZE.width, Math.ceil(BASE_PET_SIZE.width * scale + 24)),
+    height: Math.max(BASE_WINDOW_SIZE.height, Math.ceil(BASE_PET_SIZE.height * scale + 16))
+  };
+}
+
 function clampPosition(x, y) {
   const area = activeWorkArea();
+  const bounds = petWindow?.getBounds() || BASE_WINDOW_SIZE;
   return {
-    x: Math.max(area.x, Math.min(x, area.x + area.width - PET_SIZE.width)),
-    y: Math.max(area.y, Math.min(y, area.y + area.height - PET_SIZE.height))
+    x: Math.max(area.x, Math.min(x, area.x + area.width - bounds.width)),
+    y: Math.max(area.y, Math.min(y, area.y + area.height - bounds.height))
   };
+}
+
+function applyPetScale(value, persist = true) {
+  const scale = normalizedScale(value);
+  settings.petScale = scale;
+  if (petWindow && !petWindow.isDestroyed()) {
+    const old = petWindow.getBounds();
+    const size = windowSizeForScale(scale);
+    const area = activeWorkArea();
+    const x = Math.max(area.x, Math.min(old.x + old.width - size.width, area.x + area.width - size.width));
+    const y = Math.max(area.y, Math.min(old.y + old.height - size.height, area.y + area.height - size.height));
+    petWindow.setBounds({ x: Math.round(x), y: Math.round(y), ...size }, false);
+    preciseX = Math.round(x);
+    petWindow.webContents.send('pet:scale', scale);
+  }
+  if (persist) saveSettings();
+}
+
+function stopDragging() {
+  if (!dragging) return;
+  dragging = false;
+  clearInterval(dragTimer);
+  dragTimer = null;
+  const bounds = petWindow?.getBounds();
+  preciseX = bounds?.x ?? null;
+  motionPhase = 'idle';
+  phaseEndsAt = Date.now() + 1600;
+  petWindow?.webContents.send('pet:state', 'idle');
+}
+
+function startDragging(point) {
+  if (!petWindow) return;
+  clearInterval(dragTimer);
+  dragging = true;
+  dragOffset = { x: Number(point?.x) || 0, y: Number(point?.y) || 0 };
+  petWindow.webContents.send('pet:state', 'dragging');
+
+  const followCursor = () => {
+    if (!dragging || !petWindow || petWindow.isDestroyed()) return;
+    const cursor = screen.getCursorScreenPoint();
+    const pos = clampPosition(cursor.x - dragOffset.x, cursor.y - dragOffset.y);
+    const bounds = petWindow.getBounds();
+    const nextX = Math.round(pos.x);
+    const nextY = Math.round(pos.y);
+    if (nextX !== bounds.x || nextY !== bounds.y) petWindow.setPosition(nextX, nextY, false);
+  };
+
+  followCursor();
+  dragTimer = setInterval(followCursor, 16);
 }
 
 function createPetWindow() {
   const area = screen.getPrimaryDisplay().workArea;
+  const size = windowSizeForScale(settings.petScale);
   petWindow = new BrowserWindow({
-    ...PET_SIZE,
-    x: area.x + area.width - PET_SIZE.width - 24,
-    y: area.y + area.height - PET_SIZE.height,
+    ...size,
+    x: area.x + area.width - size.width - 24,
+    y: area.y + area.height - size.height,
     transparent: true,
     frame: false,
     resizable: false,
@@ -96,7 +168,10 @@ function createPetWindow() {
   });
   petWindow.setMenuBarVisibility(false);
   petWindow.loadFile(path.join(__dirname, 'index.html'));
-  petWindow.once('ready-to-show', () => petWindow.showInactive());
+  petWindow.once('ready-to-show', () => {
+    petWindow.webContents.send('pet:scale', normalizedScale(settings.petScale));
+    petWindow.showInactive();
+  });
   petWindow.on('close', (event) => {
     if (!app.isQuitting) {
       event.preventDefault();
@@ -144,8 +219,11 @@ function openPanel(tab = 'chat') {
 function setWalking(value) {
   walking = Boolean(value);
   settings.walking = walking;
+  motionPhase = 'idle';
+  phaseEndsAt = walking ? Date.now() + 1800 : Infinity;
+  preciseX = petWindow?.getBounds().x ?? null;
   saveSettings();
-  petWindow?.webContents.send('pet:state', walking ? `walk-${direction < 0 ? 'left' : 'right'}` : 'idle');
+  petWindow?.webContents.send('pet:state', 'idle');
   refreshTrayMenu();
 }
 
@@ -165,28 +243,45 @@ function setLaunchAtLogin(value) {
 
 function startMotion() {
   clearInterval(motionTimer);
-  nextDecisionAt = Date.now() + 7000;
+  motionPhase = 'idle';
+  phaseEndsAt = Date.now() + 2200;
+  lastMotionAt = Date.now();
+  preciseX = petWindow?.getBounds().x ?? null;
+  petWindow?.webContents.send('pet:state', 'idle');
   motionTimer = setInterval(() => {
-    if (!petWindow || !petWindow.isVisible() || dragging || paused) return;
-    if (Date.now() >= nextDecisionAt) {
-      if (Math.random() < 0.34) walking = false;
-      else {
-        walking = settings.walking;
-        if (Math.random() < 0.38) direction *= -1;
+    const now = Date.now();
+    const elapsed = Math.min((now - lastMotionAt) / 1000, 0.1);
+    lastMotionAt = now;
+    if (!petWindow || !petWindow.isVisible() || dragging || !walking) return;
+
+    if (now >= phaseEndsAt) {
+      if (motionPhase === 'idle') {
+        motionPhase = 'walking';
+        if (Math.random() < 0.28) direction *= -1;
+        phaseEndsAt = now + 9000 + Math.random() * 9000;
+        preciseX = petWindow.getBounds().x;
+        petWindow.webContents.send('pet:state', `walk-${direction < 0 ? 'left' : 'right'}`);
+      } else {
+        motionPhase = 'idle';
+        phaseEndsAt = now + 4500 + Math.random() * 5500;
+        petWindow.webContents.send('pet:state', 'idle');
       }
-      nextDecisionAt = Date.now() + 5000 + Math.random() * 9000;
-      petWindow.webContents.send('pet:state', walking ? `walk-${direction < 0 ? 'left' : 'right'}` : 'idle');
     }
-    if (!walking) return;
+    if (motionPhase !== 'walking') return;
+
     const bounds = petWindow.getBounds();
     const area = activeWorkArea();
-    let x = bounds.x + direction * 2;
-    if (x <= area.x || x >= area.x + area.width - bounds.width) {
+    const minX = area.x;
+    const maxX = area.x + area.width - bounds.width;
+    if (preciseX === null) preciseX = bounds.x;
+    preciseX += direction * WALK_SPEED * elapsed;
+    if (preciseX <= minX || preciseX >= maxX) {
+      preciseX = Math.max(minX, Math.min(preciseX, maxX));
       direction *= -1;
-      x = Math.max(area.x, Math.min(x, area.x + area.width - bounds.width));
       petWindow.webContents.send('pet:state', `walk-${direction < 0 ? 'left' : 'right'}`);
     }
-    petWindow.setPosition(Math.round(x), area.y + area.height - bounds.height, false);
+    const nextX = Math.round(preciseX);
+    if (nextX !== bounds.x) petWindow.setPosition(nextX, bounds.y, false);
   }, STEP_MS);
 }
 
@@ -211,57 +306,67 @@ function scheduleReminders() {
   }, Math.max(0, delay));
 }
 
-function extractResponseText(data) {
-  if (typeof data.output_text === 'string') return data.output_text;
-  return (data.output || [])
-    .flatMap((item) => item.content || [])
-    .filter((item) => item.type === 'output_text')
-    .map((item) => item.text)
-    .join('\n');
+function chatCompletionsUrl(baseUrl) {
+  const value = (baseUrl || defaults.baseUrl).trim().replace(/\/+$/, '');
+  const url = new URL(value);
+  if (!['https:', 'http:'].includes(url.protocol)) throw new Error('API 地址必须以 http:// 或 https:// 开头');
+  return value.endsWith('/chat/completions') ? value : `${value}/chat/completions`;
+}
+
+function extractChatText(data) {
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) {
+    return content.map((part) => typeof part === 'string' ? part : part?.text || '').filter(Boolean).join('\n').trim();
+  }
+  return '';
 }
 
 async function askAI(message) {
   const apiKey = decryptSecret(settings.apiKey);
-  if (!apiKey) throw new Error('请先在设置中填写 OpenAI API Key');
+  const endpoint = chatCompletionsUrl(settings.baseUrl);
+  const systemMessage = settings.persona?.trim() || defaults.persona;
+  const messages = [
+    { role: 'system', content: systemMessage },
+    ...conversationHistory.slice(-12),
+    { role: 'user', content: message }
+  ];
   const body = {
     model: settings.model || defaults.model,
-    instructions: '你是用户的桌宠月下。用自然、温柔、略带俏皮的中文回复。回答简短，通常不超过三句话；不要声称自己能操作没有提供的系统功能。',
-    input: message,
-    text: { verbosity: 'low' },
-    store: true
+    messages,
+    stream: false
   };
-  if (previousResponseId) body.previous_response_id = previousResponseId;
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify(body)
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data?.error?.message || `请求失败 (${response.status})`);
-  previousResponseId = data.id;
-  return extractResponseText(data) || '我听见啦。';
+  const headers = { 'Content-Type': 'application/json' };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000);
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('AI 请求超时，请检查 API 地址或网络');
+    throw new Error(`无法连接 AI 服务：${error.message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+  const raw = await response.text();
+  let data;
+  try { data = JSON.parse(raw); } catch { data = {}; }
+  if (!response.ok) throw new Error(data?.error?.message || raw.slice(0, 180) || `请求失败 (${response.status})`);
+  const answer = extractChatText(data);
+  if (!answer) throw new Error('AI 服务返回了无法识别的响应格式');
+  conversationHistory = [...conversationHistory, { role: 'user', content: message }, { role: 'assistant', content: answer }].slice(-12);
+  return answer;
 }
 
 function registerIpc() {
-  ipcMain.on('drag:start', (_event, point) => {
-    dragging = true;
-    dragOffset = { x: point.x, y: point.y };
-    petWindow?.webContents.send('pet:state', 'dragging');
-  });
-  ipcMain.on('drag:move', (_event, point) => {
-    if (!dragging || !petWindow) return;
-    const pos = clampPosition(point.screenX - dragOffset.x, point.screenY - dragOffset.y);
-    petWindow.setPosition(Math.round(pos.x), Math.round(pos.y), false);
-  });
-  ipcMain.on('drag:end', () => {
-    dragging = false;
-    const bounds = petWindow?.getBounds();
-    if (bounds) {
-      const area = activeWorkArea();
-      petWindow.setPosition(bounds.x, area.y + area.height - bounds.height, true);
-    }
-    petWindow?.webContents.send('pet:state', 'idle');
-  });
+  ipcMain.on('drag:start', (_event, point) => startDragging(point));
+  ipcMain.on('drag:end', stopDragging);
   ipcMain.on('mouse:passthrough', (_event, ignore) => {
     petWindow?.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
   });
@@ -271,17 +376,27 @@ function registerIpc() {
     alwaysOnTop: settings.alwaysOnTop,
     launchAtLogin: settings.launchAtLogin,
     walking: settings.walking,
+    baseUrl: settings.baseUrl,
     model: settings.model,
+    persona: settings.persona || defaults.persona,
+    petScale: normalizedScale(settings.petScale),
     hasApiKey: Boolean(settings.apiKey),
     reminders: settings.reminders || []
   }));
   ipcMain.handle('settings:save', (_event, next) => {
     if (typeof next.apiKey === 'string' && next.apiKey.trim()) settings.apiKey = encryptSecret(next.apiKey.trim());
     if (next.clearApiKey) settings.apiKey = '';
+    if (typeof next.baseUrl === 'string' && next.baseUrl.trim()) {
+      chatCompletionsUrl(next.baseUrl);
+      settings.baseUrl = next.baseUrl.trim().replace(/\/+$/, '');
+    }
     if (typeof next.model === 'string' && next.model.trim()) settings.model = next.model.trim();
+    if (typeof next.persona === 'string') settings.persona = next.persona.trim() || defaults.persona;
     if (typeof next.alwaysOnTop === 'boolean') setAlwaysOnTop(next.alwaysOnTop);
     if (typeof next.launchAtLogin === 'boolean') setLaunchAtLogin(next.launchAtLogin);
     if (typeof next.walking === 'boolean') setWalking(next.walking);
+    if (next.petScale !== undefined) applyPetScale(next.petScale, false);
+    conversationHistory = [];
     saveSettings();
     return { ok: true, hasApiKey: Boolean(settings.apiKey) };
   });
@@ -302,7 +417,7 @@ function registerIpc() {
     return settings.reminders;
   });
   ipcMain.handle('ai:ask', (_event, message) => askAI(message));
-  ipcMain.handle('ai:reset', () => { previousResponseId = null; return true; });
+  ipcMain.handle('ai:reset', () => { conversationHistory = []; return true; });
 }
 
 app.whenReady().then(() => {
@@ -320,6 +435,7 @@ app.on('window-all-closed', () => {});
 app.on('before-quit', () => {
   app.isQuitting = true;
   clearInterval(motionTimer);
+  clearInterval(dragTimer);
   clearTimeout(reminderTimer);
 });
 

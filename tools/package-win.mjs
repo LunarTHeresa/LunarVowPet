@@ -1,15 +1,16 @@
 import packager from '@electron/packager';
-import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const staging = await mkdtemp(join(tmpdir(), 'lunar-vow-pet-'));
+const projectPackage = JSON.parse(await readFile('package.json', 'utf8'));
 
 try {
   await cp('src', join(staging, 'src'), { recursive: true });
   await writeFile(join(staging, 'package.json'), JSON.stringify({
     name: 'lunar-vow-desktop-pet',
-    version: '0.1.0',
+    version: projectPackage.version,
     main: 'src/main.js'
   }, null, 2));
 

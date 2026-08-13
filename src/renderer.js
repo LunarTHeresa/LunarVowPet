@@ -4,9 +4,15 @@ const bubble = document.querySelector('#bubble');
 const heart = document.querySelector('#heart');
 const status = document.querySelector('#status');
 const messages = document.querySelector('#messages');
+const providerPresets = {
+  openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini' },
+  deepseek: { baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash' },
+  gemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.6-flash' }
+};
 let pointerDown = false;
 let moved = false;
 let startPoint = null;
+let activePointerId = null;
 let bubbleTimer;
 
 function setPetState(state) {
@@ -35,23 +41,28 @@ pet.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) return;
   pointerDown = true;
   moved = false;
-  startPoint = { x: event.clientX, y: event.clientY };
+  activePointerId = event.pointerId;
+  startPoint = { screenX: event.screenX, screenY: event.screenY };
   pet.setPointerCapture(event.pointerId);
   window.petAPI.dragStart({ x: event.clientX, y: event.clientY });
 });
 
 pet.addEventListener('pointermove', (event) => {
-  if (!pointerDown) return;
-  if (Math.hypot(event.clientX - startPoint.x, event.clientY - startPoint.y) > 5) moved = true;
-  window.petAPI.dragMove({ screenX: event.screenX, screenY: event.screenY });
+  if (!pointerDown || event.pointerId !== activePointerId) return;
+  if (Math.hypot(event.screenX - startPoint.screenX, event.screenY - startPoint.screenY) > 5) moved = true;
 });
 
-pet.addEventListener('pointerup', () => {
-  if (!pointerDown) return;
+function finishPointer(event, cancelled = false) {
+  if (!pointerDown || (event?.pointerId !== undefined && event.pointerId !== activePointerId)) return;
   pointerDown = false;
+  activePointerId = null;
   window.petAPI.dragEnd();
-  if (!moved) react();
-});
+  if (!moved && !cancelled) react();
+}
+
+pet.addEventListener('pointerup', (event) => finishPointer(event));
+pet.addEventListener('pointercancel', (event) => finishPointer(event, true));
+pet.addEventListener('lostpointercapture', (event) => finishPointer(event, true));
 
 pet.addEventListener('dblclick', () => openPanel('chat'));
 pet.addEventListener('contextmenu', (event) => { event.preventDefault(); openPanel('chat'); });
@@ -74,6 +85,15 @@ function showTab(name) {
 
 document.querySelectorAll('.tabs button').forEach((button) => button.addEventListener('click', () => showTab(button.dataset.tab)));
 document.querySelector('#close-panel').addEventListener('click', closePanel);
+document.querySelector('#provider-preset').addEventListener('change', (event) => {
+  const preset = providerPresets[event.target.value];
+  if (!preset) return;
+  document.querySelector('#base-url').value = preset.baseUrl;
+  document.querySelector('#model').value = preset.model;
+});
+document.querySelector('#pet-scale').addEventListener('input', (event) => {
+  document.querySelector('#scale-value').textContent = `${event.target.value}%`;
+});
 
 function appendMessage(kind, text) {
   const p = document.createElement('p');
@@ -143,7 +163,10 @@ document.querySelector('#settings-form').addEventListener('submit', async (event
       walking: document.querySelector('#walking').checked,
       alwaysOnTop: document.querySelector('#always-on-top').checked,
       launchAtLogin: document.querySelector('#launch-at-login').checked,
+      baseUrl: document.querySelector('#base-url').value,
       model: document.querySelector('#model').value,
+      persona: document.querySelector('#persona').value,
+      petScale: Number(document.querySelector('#pet-scale').value) / 100,
       apiKey: document.querySelector('#api-key').value
     });
     document.querySelector('#api-key').value = '';
@@ -162,8 +185,13 @@ async function initialize() {
   document.querySelector('#walking').checked = config.walking;
   document.querySelector('#always-on-top').checked = config.alwaysOnTop;
   document.querySelector('#launch-at-login').checked = config.launchAtLogin;
+  document.querySelector('#base-url').value = config.baseUrl;
   document.querySelector('#model').value = config.model;
-  document.querySelector('#key-status').textContent = config.hasApiKey ? 'API Key 已通过系统加密保存' : 'AI 聊天需填写自己的 OpenAI API Key';
+  document.querySelector('#persona').value = config.persona;
+  document.querySelector('#pet-scale').value = Math.round(config.petScale * 100);
+  document.querySelector('#scale-value').textContent = `${Math.round(config.petScale * 100)}%`;
+  document.documentElement.style.setProperty('--pet-scale', config.petScale);
+  document.querySelector('#key-status').textContent = config.hasApiKey ? 'API Key 已通过系统加密保存' : '尚未设置 API Key（本地无密钥服务可留空）';
   renderReminders(config.reminders);
   const soon = new Date(Date.now() + 10 * 60 * 1000);
   soon.setSeconds(0, 0);
@@ -173,6 +201,7 @@ async function initialize() {
 
 window.petAPI.onPetState(setPetState);
 window.petAPI.onPetSay(say);
+window.petAPI.onPetScale((scale) => document.documentElement.style.setProperty('--pet-scale', scale));
 window.petAPI.onOpenPanel(openPanel);
 window.petAPI.onTogglePanel(() => panel.classList.contains('hidden') ? openPanel('chat') : closePanel());
 window.petAPI.onClosePanel(closePanel);

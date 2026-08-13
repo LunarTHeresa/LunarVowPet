@@ -29,24 +29,35 @@ jobs:
       - name: Package Windows x64
         run: npm run package:win
 
+      - name: Read release metadata
+        id: metadata
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+          "zip=LunarVowPet-Windows-x64-v$version.zip" >> $env:GITHUB_OUTPUT
+
       - name: Create portable ZIP
         shell: pwsh
-        run: Compress-Archive -Path release/LunarVowPet-win32-x64 -DestinationPath LunarVowPet-Windows-x64-v0.1.0.zip
+        run: Compress-Archive -Path release/LunarVowPet-win32-x64 -DestinationPath "${{ steps.metadata.outputs.zip }}"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: LunarVowPet-Windows-x64
-          path: LunarVowPet-Windows-x64-v0.1.0.zip
+          path: ${{ steps.metadata.outputs.zip }}
 
       - name: Publish GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v0.1.0 *> $null
+          $tag = "${{ steps.metadata.outputs.tag }}"
+          $zip = "${{ steps.metadata.outputs.zip }}"
+          gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload v0.1.0 LunarVowPet-Windows-x64-v0.1.0.zip --clobber
+            gh release upload $tag $zip --clobber
           } else {
-            gh release create v0.1.0 LunarVowPet-Windows-x64-v0.1.0.zip --target $env:GITHUB_SHA --title "LunarVowPet v0.1.0" --notes "Windows x64 便携版。完整解压后运行 LunarVowPet.exe。"
+            gh release create $tag $zip --target $env:GITHUB_SHA --title "LunarVowPet $tag" --notes "修复桌面移动抖动和拖动乱跑，新增 OpenAI、DeepSeek、Google Gemini 及其他 OpenAI Chat Completions 兼容 API。完整解压后运行 LunarVowPet.exe。"
           }
