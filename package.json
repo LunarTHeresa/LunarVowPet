@@ -10,7 +10,7 @@
     "start": "electron .",
     "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js",
     "assets": "node tools/extract-alpha.mjs generated_images/exec-6c6c82ba-785e-41d5-852a-b957d4ff6b58.png src/assets/pet-master.png && node tools/make-assets.mjs",
-    "package:win": "electron-packager . LunarVowPet --platform=win32 --arch=x64 --out=release --overwrite --prune=true --asar --icon=src/assets/icon.ico --ignore='(^|/)(release|artifacts|generated_images|upload|tools|node_modules|[.]agents|[.]codex)(/|$)' --ignore='(^|/)README[.]md$'"
+    "package:win": "node tools/package-win.mjs"
   },
   "dependencies": {},
   "devDependencies": {
