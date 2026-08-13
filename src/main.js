@@ -3,11 +3,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
-const BASE_WINDOW_SIZE = { width: 330, height: 430 };
 const BASE_PET_SIZE = { width: 210, height: 300 };
+const PET_WINDOW_EXTRA = { width: 16, height: 76 };
+const PANEL_SIZE = { width: 380, height: 520 };
 const STEP_MS = 33;
 const WALK_SPEED = 24;
 let petWindow;
+let panelWindow;
 let tray;
 let motionTimer;
 let dragTimer;
@@ -80,14 +82,18 @@ function normalizedScale(value) {
 function windowSizeForScale(value) {
   const scale = normalizedScale(value);
   return {
-    width: Math.max(BASE_WINDOW_SIZE.width, Math.ceil(BASE_PET_SIZE.width * scale + 24)),
-    height: Math.max(BASE_WINDOW_SIZE.height, Math.ceil(BASE_PET_SIZE.height * scale + 16))
+    width: Math.ceil(BASE_PET_SIZE.width * scale + PET_WINDOW_EXTRA.width),
+    height: Math.ceil(BASE_PET_SIZE.height * scale + PET_WINDOW_EXTRA.height)
   };
 }
 
 function clampPosition(x, y) {
-  const area = activeWorkArea();
-  const bounds = petWindow?.getBounds() || BASE_WINDOW_SIZE;
+  const bounds = petWindow?.getBounds() || windowSizeForScale(settings.petScale);
+  const display = screen.getDisplayNearestPoint({
+    x: Math.round(x + bounds.width / 2),
+    y: Math.round(y + bounds.height / 2)
+  });
+  const area = display.workArea;
   return {
     x: Math.max(area.x, Math.min(x, area.x + area.width - bounds.width)),
     y: Math.max(area.y, Math.min(y, area.y + area.height - bounds.height))
@@ -167,7 +173,7 @@ function createPetWindow() {
     }
   });
   petWindow.setMenuBarVisibility(false);
-  petWindow.loadFile(path.join(__dirname, 'index.html'));
+  petWindow.loadFile(path.join(__dirname, 'pet.html'));
   petWindow.once('ready-to-show', () => {
     petWindow.webContents.send('pet:scale', normalizedScale(settings.petScale));
     petWindow.showInactive();
@@ -184,6 +190,44 @@ function createPetWindow() {
   });
   petWindow.webContents.on('will-navigate', (event) => event.preventDefault());
   petWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+}
+
+function createPanelWindow() {
+  panelWindow = new BrowserWindow({
+    ...PANEL_SIZE,
+    show: false,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    alwaysOnTop: settings.alwaysOnTop,
+    skipTaskbar: false,
+    backgroundColor: '#241025',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  panelWindow.setMenuBarVisibility(false);
+  panelWindow.loadFile(path.join(__dirname, 'index.html'));
+  panelWindow.on('close', (event) => {
+    if (!app.isQuitting) {
+      event.preventDefault();
+      panelWindow.hide();
+    }
+  });
+  panelWindow.on('hide', () => {
+    phaseEndsAt = Date.now() + 1600;
+    petWindow?.webContents.send('pet:state', 'idle');
+  });
+  panelWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://')) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  panelWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+  panelWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
 }
 
 function refreshTrayMenu() {
@@ -210,10 +254,15 @@ function createTray() {
 }
 
 function openPanel(tab = 'chat') {
-  if (!petWindow) return;
-  petWindow.show();
-  petWindow.focus();
-  petWindow.webContents.send('panel:open', tab);
+  if (!panelWindow) return;
+  const area = activeWorkArea();
+  const x = Math.round(area.x + (area.width - PANEL_SIZE.width) / 2);
+  const y = Math.round(area.y + (area.height - PANEL_SIZE.height) / 2);
+  panelWindow.setPosition(x, y, false);
+  panelWindow.show();
+  panelWindow.focus();
+  panelWindow.webContents.send('panel:open', tab);
+  petWindow?.webContents.send('pet:state', 'idle');
 }
 
 function setWalking(value) {
@@ -230,6 +279,7 @@ function setWalking(value) {
 function setAlwaysOnTop(value) {
   settings.alwaysOnTop = Boolean(value);
   petWindow?.setAlwaysOnTop(settings.alwaysOnTop);
+  panelWindow?.setAlwaysOnTop(settings.alwaysOnTop);
   saveSettings();
   refreshTrayMenu();
 }
@@ -252,7 +302,7 @@ function startMotion() {
     const now = Date.now();
     const elapsed = Math.min((now - lastMotionAt) / 1000, 0.1);
     lastMotionAt = now;
-    if (!petWindow || !petWindow.isVisible() || dragging || !walking) return;
+    if (!petWindow || !petWindow.isVisible() || panelWindow?.isVisible() || dragging || !walking) return;
 
     if (now >= phaseEndsAt) {
       if (motionPhase === 'idle') {
@@ -370,8 +420,10 @@ function registerIpc() {
   ipcMain.on('mouse:passthrough', (_event, ignore) => {
     petWindow?.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
   });
-  ipcMain.on('panel:toggle', () => petWindow?.webContents.send('panel:toggle'));
-  ipcMain.on('panel:close', () => petWindow?.webContents.send('panel:close'));
+  ipcMain.on('panel:open-request', (_event, tab) => openPanel(tab));
+  ipcMain.on('pet:say-request', (_event, message) => petWindow?.webContents.send('pet:say', String(message || '')));
+  ipcMain.on('panel:toggle', () => panelWindow?.isVisible() ? panelWindow.hide() : openPanel('chat'));
+  ipcMain.on('panel:close', () => panelWindow?.hide());
   ipcMain.handle('settings:get', () => ({
     alwaysOnTop: settings.alwaysOnTop,
     launchAtLogin: settings.launchAtLogin,
@@ -425,6 +477,7 @@ app.whenReady().then(() => {
   loadSettings();
   registerIpc();
   createPetWindow();
+  createPanelWindow();
   createTray();
   setLaunchAtLogin(settings.launchAtLogin);
   startMotion();

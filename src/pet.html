@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>月下誓约桌宠</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="pet-window">
+    <main id="stage">
+      <section id="bubble" class="bubble hidden" aria-live="polite"></section>
+      <button id="pet" class="pet idle" aria-label="月下誓约桌宠">
+        <img id="pet-image" src="assets/walk/walk-1.png" alt="月下誓约 Q 版角色" draggable="false" />
+        <span class="blink"></span>
+        <span id="heart" class="heart">♥</span>
+      </button>
+    </main>
+    <script src="pet-renderer.js"></script>
+  </body>
+</html>

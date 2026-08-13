@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('petAPI', {
   dragStart: (point) => ipcRenderer.send('drag:start', point),
   dragEnd: () => ipcRenderer.send('drag:end'),
+  openPanel: (tab) => ipcRenderer.send('panel:open-request', tab),
+  say: (message) => ipcRenderer.send('pet:say-request', message),
   setMousePassthrough: (ignore) => ipcRenderer.send('mouse:passthrough', ignore),
   togglePanel: () => ipcRenderer.send('panel:toggle'),
   closePanel: () => ipcRenderer.send('panel:close'),

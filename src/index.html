@@ -7,10 +7,9 @@
     <title>月下誓约桌宠</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
+  <body class="panel-window">
     <main id="stage">
-      <section id="bubble" class="bubble hidden" aria-live="polite"></section>
-      <section id="panel" class="panel hidden" aria-label="月下助手">
+      <section id="panel" class="panel" aria-label="月下助手">
         <header class="panel-head">
           <strong>月下的小屋</strong>
           <button id="close-panel" class="icon-button" aria-label="关闭">×</button>
@@ -59,11 +58,6 @@
         </div>
         <p id="status" class="status"></p>
       </section>
-      <button id="pet" class="pet idle" aria-label="月下誓约桌宠">
-        <img src="assets/pet.png" alt="月下誓约 Q 版角色" draggable="false" />
-        <span class="blink"></span>
-        <span id="heart" class="heart">♥</span>
-      </button>
     </main>
     <script src="renderer.js"></script>
   </body>

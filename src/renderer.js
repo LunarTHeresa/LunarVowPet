@@ -1,7 +1,3 @@
-const pet = document.querySelector('#pet');
-const panel = document.querySelector('#panel');
-const bubble = document.querySelector('#bubble');
-const heart = document.querySelector('#heart');
 const status = document.querySelector('#status');
 const messages = document.querySelector('#messages');
 const providerPresets = {
@@ -9,74 +5,6 @@ const providerPresets = {
   deepseek: { baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash' },
   gemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.6-flash' }
 };
-let pointerDown = false;
-let moved = false;
-let startPoint = null;
-let activePointerId = null;
-let bubbleTimer;
-
-function setPetState(state) {
-  pet.classList.remove('idle', 'walk-left', 'walk-right', 'dragging');
-  pet.classList.add(state || 'idle');
-}
-
-function say(text, timeout = 4500) {
-  clearTimeout(bubbleTimer);
-  bubble.textContent = text;
-  bubble.classList.remove('hidden');
-  bubbleTimer = setTimeout(() => bubble.classList.add('hidden'), timeout);
-}
-
-function react() {
-  pet.classList.remove('reacting');
-  void pet.offsetWidth;
-  pet.classList.add('reacting');
-  heart.classList.remove('pop');
-  void heart.offsetWidth;
-  heart.classList.add('pop');
-  say(['嗯？我在这里。', '今天也要好好陪着我哦。', '不许悄悄溜走。', '要和我聊聊天吗？'][Math.floor(Math.random() * 4)]);
-}
-
-pet.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0) return;
-  pointerDown = true;
-  moved = false;
-  activePointerId = event.pointerId;
-  startPoint = { screenX: event.screenX, screenY: event.screenY };
-  pet.setPointerCapture(event.pointerId);
-  window.petAPI.dragStart({ x: event.clientX, y: event.clientY });
-});
-
-pet.addEventListener('pointermove', (event) => {
-  if (!pointerDown || event.pointerId !== activePointerId) return;
-  if (Math.hypot(event.screenX - startPoint.screenX, event.screenY - startPoint.screenY) > 5) moved = true;
-});
-
-function finishPointer(event, cancelled = false) {
-  if (!pointerDown || (event?.pointerId !== undefined && event.pointerId !== activePointerId)) return;
-  pointerDown = false;
-  activePointerId = null;
-  window.petAPI.dragEnd();
-  if (!moved && !cancelled) react();
-}
-
-pet.addEventListener('pointerup', (event) => finishPointer(event));
-pet.addEventListener('pointercancel', (event) => finishPointer(event, true));
-pet.addEventListener('lostpointercapture', (event) => finishPointer(event, true));
-
-pet.addEventListener('dblclick', () => openPanel('chat'));
-pet.addEventListener('contextmenu', (event) => { event.preventDefault(); openPanel('chat'); });
-
-function openPanel(tab = 'chat') {
-  panel.classList.remove('hidden');
-  window.petAPI.setMousePassthrough(false);
-  showTab(tab);
-}
-
-function closePanel() {
-  panel.classList.add('hidden');
-  window.petAPI.setMousePassthrough(true);
-}
 
 function showTab(name) {
   document.querySelectorAll('.tabs button').forEach((button) => button.classList.toggle('active', button.dataset.tab === name));
@@ -84,7 +12,7 @@ function showTab(name) {
 }
 
 document.querySelectorAll('.tabs button').forEach((button) => button.addEventListener('click', () => showTab(button.dataset.tab)));
-document.querySelector('#close-panel').addEventListener('click', closePanel);
+document.querySelector('#close-panel').addEventListener('click', () => window.petAPI.closePanel());
 document.querySelector('#provider-preset').addEventListener('change', (event) => {
   const preset = providerPresets[event.target.value];
   if (!preset) return;
@@ -115,7 +43,7 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
   try {
     const answer = await window.petAPI.askAI(message);
     waiting.textContent = answer;
-    say(answer, 6500);
+    window.petAPI.say(answer);
   } catch (error) {
     waiting.className = 'error';
     waiting.textContent = error.message;
@@ -153,7 +81,9 @@ document.querySelector('#reminder-form').addEventListener('submit', async (event
     renderReminders(reminders);
     event.target.reset();
     status.textContent = '提醒已保存';
-  } catch (error) { status.textContent = error.message; }
+  } catch (error) {
+    status.textContent = error.message;
+  }
 });
 
 document.querySelector('#settings-form').addEventListener('submit', async (event) => {
@@ -172,7 +102,9 @@ document.querySelector('#settings-form').addEventListener('submit', async (event
     document.querySelector('#api-key').value = '';
     document.querySelector('#key-status').textContent = result.hasApiKey ? 'API Key 已通过系统加密保存' : '尚未设置 API Key';
     status.textContent = '设置已保存';
-  } catch (error) { status.textContent = error.message; }
+  } catch (error) {
+    status.textContent = error.message;
+  }
 });
 
 document.querySelector('#clear-key').addEventListener('click', async () => {
@@ -190,7 +122,6 @@ async function initialize() {
   document.querySelector('#persona').value = config.persona;
   document.querySelector('#pet-scale').value = Math.round(config.petScale * 100);
   document.querySelector('#scale-value').textContent = `${Math.round(config.petScale * 100)}%`;
-  document.documentElement.style.setProperty('--pet-scale', config.petScale);
   document.querySelector('#key-status').textContent = config.hasApiKey ? 'API Key 已通过系统加密保存' : '尚未设置 API Key（本地无密钥服务可留空）';
   renderReminders(config.reminders);
   const soon = new Date(Date.now() + 10 * 60 * 1000);
@@ -199,17 +130,5 @@ async function initialize() {
   document.querySelector('#reminder-when').value = new Date(soon.getTime() - offset).toISOString().slice(0, 16);
 }
 
-window.petAPI.onPetState(setPetState);
-window.petAPI.onPetSay(say);
-window.petAPI.onPetScale((scale) => document.documentElement.style.setProperty('--pet-scale', scale));
-window.petAPI.onOpenPanel(openPanel);
-window.petAPI.onTogglePanel(() => panel.classList.contains('hidden') ? openPanel('chat') : closePanel());
-window.petAPI.onClosePanel(closePanel);
-document.addEventListener('mousemove', (event) => {
-  if (!panel.classList.contains('hidden') || pointerDown) return;
-  window.petAPI.setMousePassthrough(!event.target.closest('#pet'));
-});
-document.addEventListener('mouseleave', () => {
-  if (panel.classList.contains('hidden') && !pointerDown) window.petAPI.setMousePassthrough(true);
-});
+window.petAPI.onOpenPanel(showTab);
 initialize();

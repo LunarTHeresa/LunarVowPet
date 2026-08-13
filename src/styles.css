@@ -12,6 +12,10 @@ html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background:
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 #stage { position: relative; width: 100%; height: 100%; }
+.panel-window { background: #241025; }
+.panel-window .panel { inset: 0; width: 100%; height: 100%; border-radius: 0; }
+.panel-window .tab { height: calc(100% - 92px); padding-bottom: 24px; }
+.panel-window .messages { height: calc(100% - 42px); }
 
 .pet {
   position: absolute;
@@ -32,8 +36,8 @@ button { cursor: pointer; }
 .pet:active { cursor: grabbing; }
 .pet img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; -webkit-user-drag: none; }
 .pet.idle { animation: breathe 2.6s ease-in-out infinite; }
-.pet.walk-left { animation: walk-left .78s ease-in-out infinite; }
-.pet.walk-right { animation: walk-right .78s ease-in-out infinite; }
+.pet.walk-left { animation: none; transform: scaleX(1); }
+.pet.walk-right { animation: none; transform: scaleX(-1); }
 .pet.dragging { animation: dangling .35s ease-in-out infinite alternate; }
 .pet.reacting { animation: react .55s cubic-bezier(.2,.9,.3,1.3); }
 
@@ -44,8 +48,8 @@ button { cursor: pointer; }
 .bubble {
   position: absolute;
   right: 18px;
-  bottom: 292px;
-  max-width: 230px;
+  bottom: calc(292px * var(--pet-scale));
+  max-width: calc(100% - 16px);
   padding: 10px 13px;
   color: #3b1724;
   background: rgba(255, 248, 248, .96);
@@ -107,8 +111,6 @@ form button { padding: 7px 12px; border: 0; border-radius: 8px; color: white; ba
 .reminder-item button { border: 0; color: #ffcbd3; background: transparent; }
 
 @keyframes breathe { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(2px) scale(1.012,.992); } }
-@keyframes walk-left { 0%,100% { transform: translateY(0) rotate(-.25deg) scaleX(1); } 50% { transform: translateY(-1.5px) rotate(.25deg) scaleX(.997); } }
-@keyframes walk-right { 0%,100% { transform: translateY(0) rotate(.25deg) scaleX(-1); } 50% { transform: translateY(-1.5px) rotate(-.25deg) scaleX(-.997); } }
 @keyframes dangling { from { transform: rotate(-3deg) translateY(-2px); } to { transform: rotate(3deg) translateY(2px); } }
 @keyframes react { 0% { transform: scale(1); } 35% { transform: translateY(-14px) scale(1.06,.94); } 65% { transform: translateY(1px) scale(.96,1.04); } 100% { transform: scale(1); } }
 @keyframes heart { 0% { opacity: 0; transform: translateY(8px) scale(.5); } 25% { opacity: 1; transform: translateY(0) scale(1.15); } 100% { opacity: 0; transform: translateY(-38px) scale(.8); } }
