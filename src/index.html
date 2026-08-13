@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>月下誓约桌宠</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="stage">
+      <section id="bubble" class="bubble hidden" aria-live="polite"></section>
+      <section id="panel" class="panel hidden" aria-label="月下助手">
+        <header class="panel-head">
+          <strong>月下的小屋</strong>
+          <button id="close-panel" class="icon-button" aria-label="关闭">×</button>
+        </header>
+        <nav class="tabs">
+          <button data-tab="chat" class="active">聊天</button>
+          <button data-tab="reminders">提醒</button>
+          <button data-tab="settings">设置</button>
+        </nav>
+        <div id="tab-chat" class="tab active">
+          <div id="messages" class="messages"><p class="assistant">晚上好。想和我说些什么？</p></div>
+          <form id="chat-form" class="composer">
+            <input id="chat-input" maxlength="500" placeholder="和月下说话…" autocomplete="off" />
+            <button type="submit">发送</button>
+          </form>
+        </div>
+        <div id="tab-reminders" class="tab">
+          <form id="reminder-form" class="stack">
+            <input id="reminder-text" maxlength="80" placeholder="提醒内容" required />
+            <input id="reminder-when" type="datetime-local" required />
+            <button type="submit">添加提醒</button>
+          </form>
+          <div id="reminder-list" class="reminder-list"></div>
+        </div>
+        <div id="tab-settings" class="tab">
+          <form id="settings-form" class="stack">
+            <label class="switch-row"><span>桌面自动散步</span><input id="walking" type="checkbox" /></label>
+            <label class="switch-row"><span>始终置顶</span><input id="always-on-top" type="checkbox" /></label>
+            <label class="switch-row"><span>开机自启</span><input id="launch-at-login" type="checkbox" /></label>
+            <label>AI 模型<input id="model" value="gpt-5.6-luna" /></label>
+            <label>OpenAI API Key<input id="api-key" type="password" placeholder="留空则保持现有密钥" /></label>
+            <p id="key-status" class="hint"></p>
+            <div class="button-row"><button type="submit">保存</button><button type="button" id="clear-key" class="secondary">清除密钥</button></div>
+          </form>
+        </div>
+        <p id="status" class="status"></p>
+      </section>
+      <button id="pet" class="pet idle" aria-label="月下誓约桌宠">
+        <img src="assets/pet.png" alt="月下誓约 Q 版角色" draggable="false" />
+        <span class="blink"></span>
+        <span id="heart" class="heart">♥</span>
+      </button>
+    </main>
+    <script src="renderer.js"></script>
+  </body>
+</html>
