@@ -35,7 +35,7 @@ button { cursor: pointer; }
 }
 .pet:active { cursor: grabbing; }
 .pet img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; -webkit-user-drag: none; }
-.pet.idle { animation: breathe 2.6s ease-in-out infinite; }
+.pet.idle { animation: breathe 3.2s ease-in-out infinite; }
 .pet.walk-left { animation: none; transform: scaleX(1); }
 .pet.walk-right { animation: none; transform: scaleX(-1); }
 .pet.dragging { animation: dangling .35s ease-in-out infinite alternate; }
@@ -110,7 +110,7 @@ form button { padding: 7px 12px; border: 0; border-radius: 8px; color: white; ba
 .reminder-item { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; margin: 4px 0; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,.07); font-size: 11px; }
 .reminder-item button { border: 0; color: #ffcbd3; background: transparent; }
 
-@keyframes breathe { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(2px) scale(1.012,.992); } }
+@keyframes breathe { 0%,100% { transform: translateY(0); } 50% { transform: translateY(1px); } }
 @keyframes dangling { from { transform: rotate(-3deg) translateY(-2px); } to { transform: rotate(3deg) translateY(2px); } }
 @keyframes react { 0% { transform: scale(1); } 35% { transform: translateY(-14px) scale(1.06,.94); } 65% { transform: translateY(1px) scale(.96,1.04); } 100% { transform: scale(1); } }
 @keyframes heart { 0% { opacity: 0; transform: translateY(8px) scale(.5); } 25% { opacity: 1; transform: translateY(0) scale(1.15); } 100% { opacity: 0; transform: translateY(-38px) scale(.8); } }

@@ -7,11 +7,11 @@ let moved = false;
 let startPoint = null;
 let activePointerId = null;
 let bubbleTimer;
-let walkTimer = null;
-let walkFrame = 1;
-const walkFrames = Array.from({ length: 8 }, (_, index) => `assets/walk/walk-${index}.png`);
+let walkFrame = 0;
+const idleFrame = 'assets/idle-v2.png';
+const walkFrames = Array.from({ length: 16 }, (_, index) => `assets/walk-16/walk-${String(index).padStart(2, '0')}.png`);
 
-for (const source of walkFrames) {
+for (const source of [idleFrame, ...walkFrames]) {
   const image = new Image();
   image.src = source;
 }
@@ -22,17 +22,16 @@ function showWalkFrame(index) {
 }
 
 function setPetState(state) {
-  clearInterval(walkTimer);
-  walkTimer = null;
   pet.classList.remove('idle', 'walk-left', 'walk-right', 'dragging');
   const nextState = state || 'idle';
-  pet.classList.add(nextState);
-  if (nextState === 'walk-left' || nextState === 'walk-right') {
-    showWalkFrame(walkFrame === 1 ? 0 : walkFrame);
-    walkTimer = setInterval(() => showWalkFrame(walkFrame + 1), 105);
-  } else if (nextState === 'idle') {
-    showWalkFrame(1);
+  const walk = /^walk-(left|right)-(\d+)$/.exec(nextState);
+  if (walk) {
+    pet.classList.add(`walk-${walk[1]}`);
+    showWalkFrame(Number(walk[2]));
+    return;
   }
+  pet.classList.add(nextState === 'dragging' ? 'dragging' : 'idle');
+  petImage.src = idleFrame;
 }
 
 function say(text, timeout = 4500) {
@@ -77,7 +76,8 @@ function finishPointer(event, cancelled = false) {
 
 pet.addEventListener('pointerup', (event) => finishPointer(event));
 pet.addEventListener('pointercancel', (event) => finishPointer(event, true));
-pet.addEventListener('lostpointercapture', (event) => finishPointer(event, true));
+document.addEventListener('pointerup', (event) => finishPointer(event));
+document.addEventListener('pointercancel', (event) => finishPointer(event, true));
 pet.addEventListener('dblclick', () => window.petAPI.openPanel('chat'));
 pet.addEventListener('contextmenu', (event) => {
   event.preventDefault();
