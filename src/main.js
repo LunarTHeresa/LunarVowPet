@@ -7,7 +7,9 @@ const BASE_PET_SIZE = { width: 210, height: 300 };
 const PET_WINDOW_EXTRA = { width: 16, height: 76 };
 const PANEL_SIZE = { width: 380, height: 520 };
 const STEP_MS = 33;
-const WALK_SPEED = 24;
+const WALK_STEP_PIXELS = 1;
+const WALK_FRAME_COUNT = 16;
+const WALK_CYCLE_PIXELS = 48;
 let petWindow;
 let panelWindow;
 let tray;
@@ -20,8 +22,10 @@ let dragging = false;
 let dragOffset = { x: 0, y: 0 };
 let motionPhase = 'idle';
 let phaseEndsAt = 0;
-let lastMotionAt = 0;
 let preciseX = null;
+let walkDistance = 0;
+let currentWalkFrame = -1;
+let turnPending = false;
 let settings = {};
 let conversationHistory = [];
 
@@ -87,9 +91,9 @@ function windowSizeForScale(value) {
   };
 }
 
-function clampPosition(x, y) {
+function clampPosition(x, y, referencePoint = null) {
   const bounds = petWindow?.getBounds() || windowSizeForScale(settings.petScale);
-  const display = screen.getDisplayNearestPoint({
+  const display = screen.getDisplayNearestPoint(referencePoint || {
     x: Math.round(x + bounds.width / 2),
     y: Math.round(y + bounds.height / 2)
   });
@@ -98,6 +102,25 @@ function clampPosition(x, y) {
     x: Math.max(area.x, Math.min(x, area.x + area.width - bounds.width)),
     y: Math.max(area.y, Math.min(y, area.y + area.height - bounds.height))
   };
+}
+
+function showIdle() {
+  currentWalkFrame = -1;
+  petWindow?.webContents.send('pet:state', 'idle');
+}
+
+function showWalkFrame(force = false) {
+  const frame = Math.floor((walkDistance % WALK_CYCLE_PIXELS) / (WALK_CYCLE_PIXELS / WALK_FRAME_COUNT));
+  if (!force && frame === currentWalkFrame) return frame;
+  currentWalkFrame = frame;
+  petWindow?.webContents.send('pet:state', `walk-${direction < 0 ? 'left' : 'right'}-${frame}`);
+  return frame;
+}
+
+function enterIdle(duration) {
+  motionPhase = 'idle';
+  phaseEndsAt = Date.now() + duration;
+  showIdle();
 }
 
 function applyPetScale(value, persist = true) {
@@ -123,22 +146,22 @@ function stopDragging() {
   dragTimer = null;
   const bounds = petWindow?.getBounds();
   preciseX = bounds?.x ?? null;
-  motionPhase = 'idle';
-  phaseEndsAt = Date.now() + 1600;
-  petWindow?.webContents.send('pet:state', 'idle');
+  enterIdle(1600);
 }
 
 function startDragging(point) {
   if (!petWindow) return;
   clearInterval(dragTimer);
   dragging = true;
+  motionPhase = 'idle';
+  currentWalkFrame = -1;
   dragOffset = { x: Number(point?.x) || 0, y: Number(point?.y) || 0 };
   petWindow.webContents.send('pet:state', 'dragging');
 
   const followCursor = () => {
     if (!dragging || !petWindow || petWindow.isDestroyed()) return;
     const cursor = screen.getCursorScreenPoint();
-    const pos = clampPosition(cursor.x - dragOffset.x, cursor.y - dragOffset.y);
+    const pos = clampPosition(cursor.x - dragOffset.x, cursor.y - dragOffset.y, cursor);
     const bounds = petWindow.getBounds();
     const nextX = Math.round(pos.x);
     const nextY = Math.round(pos.y);
@@ -219,8 +242,7 @@ function createPanelWindow() {
     }
   });
   panelWindow.on('hide', () => {
-    phaseEndsAt = Date.now() + 1600;
-    petWindow?.webContents.send('pet:state', 'idle');
+    enterIdle(1600);
   });
   panelWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url);
@@ -262,7 +284,7 @@ function openPanel(tab = 'chat') {
   panelWindow.show();
   panelWindow.focus();
   panelWindow.webContents.send('panel:open', tab);
-  petWindow?.webContents.send('pet:state', 'idle');
+  enterIdle(1600);
 }
 
 function setWalking(value) {
@@ -271,8 +293,9 @@ function setWalking(value) {
   motionPhase = 'idle';
   phaseEndsAt = walking ? Date.now() + 1800 : Infinity;
   preciseX = petWindow?.getBounds().x ?? null;
+  walkDistance = 0;
   saveSettings();
-  petWindow?.webContents.send('pet:state', 'idle');
+  showIdle();
   refreshTrayMenu();
 }
 
@@ -295,43 +318,49 @@ function startMotion() {
   clearInterval(motionTimer);
   motionPhase = 'idle';
   phaseEndsAt = Date.now() + 2200;
-  lastMotionAt = Date.now();
   preciseX = petWindow?.getBounds().x ?? null;
-  petWindow?.webContents.send('pet:state', 'idle');
+  walkDistance = 0;
+  showIdle();
   motionTimer = setInterval(() => {
     const now = Date.now();
-    const elapsed = Math.min((now - lastMotionAt) / 1000, 0.1);
-    lastMotionAt = now;
     if (!petWindow || !petWindow.isVisible() || panelWindow?.isVisible() || dragging || !walking) return;
 
     if (now >= phaseEndsAt) {
       if (motionPhase === 'idle') {
         motionPhase = 'walking';
-        if (Math.random() < 0.28) direction *= -1;
+        if (turnPending) turnPending = false;
+        else if (Math.random() < 0.28) direction *= -1;
         phaseEndsAt = now + 9000 + Math.random() * 9000;
         preciseX = petWindow.getBounds().x;
-        petWindow.webContents.send('pet:state', `walk-${direction < 0 ? 'left' : 'right'}`);
-      } else {
-        motionPhase = 'idle';
-        phaseEndsAt = now + 4500 + Math.random() * 5500;
-        petWindow.webContents.send('pet:state', 'idle');
+        walkDistance = 0;
+        showWalkFrame(true);
+      } else if (motionPhase === 'walking') {
+        motionPhase = 'stopping';
+        phaseEndsAt = Infinity;
       }
     }
-    if (motionPhase !== 'walking') return;
+    if (motionPhase !== 'walking' && motionPhase !== 'stopping') return;
 
     const bounds = petWindow.getBounds();
     const area = activeWorkArea();
     const minX = area.x;
     const maxX = area.x + area.width - bounds.width;
     if (preciseX === null) preciseX = bounds.x;
-    preciseX += direction * WALK_SPEED * elapsed;
+    preciseX += direction * WALK_STEP_PIXELS;
     if (preciseX <= minX || preciseX >= maxX) {
       preciseX = Math.max(minX, Math.min(preciseX, maxX));
       direction *= -1;
-      petWindow.webContents.send('pet:state', `walk-${direction < 0 ? 'left' : 'right'}`);
+      turnPending = true;
+      enterIdle(650);
+      return;
     }
     const nextX = Math.round(preciseX);
     if (nextX !== bounds.x) petWindow.setPosition(nextX, bounds.y, false);
+    walkDistance = (walkDistance + WALK_STEP_PIXELS) % WALK_CYCLE_PIXELS;
+    const frame = showWalkFrame();
+    if (motionPhase === 'stopping' && (frame === 0 || frame === WALK_FRAME_COUNT / 2)) {
+      enterIdle(4500 + Math.random() * 5500);
+    }
   }, STEP_MS);
 }
 
