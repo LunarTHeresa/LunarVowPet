@@ -21,6 +21,7 @@ document.querySelector('#provider-preset').addEventListener('change', (event) =>
 });
 document.querySelector('#pet-scale').addEventListener('input', (event) => {
   document.querySelector('#scale-value').textContent = `${event.target.value}%`;
+  window.petAPI.previewScale(Number(event.target.value) / 100);
 });
 
 function appendMessage(kind, text) {
@@ -90,7 +91,6 @@ document.querySelector('#settings-form').addEventListener('submit', async (event
   event.preventDefault();
   try {
     const result = await window.petAPI.saveSettings({
-      walking: document.querySelector('#walking').checked,
       alwaysOnTop: document.querySelector('#always-on-top').checked,
       launchAtLogin: document.querySelector('#launch-at-login').checked,
       baseUrl: document.querySelector('#base-url').value,
@@ -114,7 +114,6 @@ document.querySelector('#clear-key').addEventListener('click', async () => {
 
 async function initialize() {
   const config = await window.petAPI.getSettings();
-  document.querySelector('#walking').checked = config.walking;
   document.querySelector('#always-on-top').checked = config.alwaysOnTop;
   document.querySelector('#launch-at-login').checked = config.launchAtLogin;
   document.querySelector('#base-url').value = config.baseUrl;

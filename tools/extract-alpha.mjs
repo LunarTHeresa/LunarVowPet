@@ -12,6 +12,12 @@ const background = new Uint8Array(count);
 const queue = new Int32Array(count);
 let head = 0;
 let tail = 0;
+const cornerSamples = [0, width - 1, (height - 1) * width, count - 1];
+const cornerBrightness = cornerSamples.reduce((sum, index) => {
+  const offset = index * channels;
+  return sum + Math.max(data[offset], data[offset + 1], data[offset + 2]);
+}, 0) / cornerSamples.length;
+const darkBackground = cornerBrightness < 40;
 
 function isBackgroundCandidate(index) {
   const offset = index * channels;
@@ -20,9 +26,10 @@ function isBackgroundCandidate(index) {
   const b = data[offset + 2];
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
-  // The generated preview contains a baked neutral checkerboard plus
-  // anti-aliased gray fringe. Only flood pixels connected to the canvas edge,
-  // so enclosed white hair and costume highlights remain intact.
+  // Generated sprites may contain either a baked neutral checkerboard or a
+  // solid black backdrop. Only flood pixels connected to the canvas edge, so
+  // enclosed hair, eyes and costume details remain intact.
+  if (darkBackground) return max <= 18 && max - min <= 12;
   return max >= 170 && max - min <= 28;
 }
 

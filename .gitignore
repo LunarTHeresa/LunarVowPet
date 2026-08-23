@@ -6,4 +6,12 @@ upload/
 .library-upload-tmp/
 verify-merge*/
 *.log
+.env
+.env.*
+!.env.example
+settings.json
+secrets.json
+*.pem
+*.p12
+*.key
 

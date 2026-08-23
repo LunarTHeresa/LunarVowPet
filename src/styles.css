@@ -28,22 +28,26 @@ button { cursor: pointer; }
   outline: 0;
   background: transparent;
   transform-origin: 50% 94%;
+  will-change: transform;
   cursor: grab;
   touch-action: none;
   filter: drop-shadow(0 7px 5px rgba(30, 8, 22, .25));
   z-index: 2;
 }
 .pet:active { cursor: grabbing; }
-.pet img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; -webkit-user-drag: none; }
+.pet img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; -webkit-user-drag: none; }
+.pet .pet-image-main { z-index: 1; }
+.pet .pet-image-fade { opacity: 0; z-index: 2; }
+.pet .pet-image-fade.crossfade-out { animation: sprite-crossfade 180ms ease-out both; }
 .pet.idle { animation: breathe 3.2s ease-in-out infinite; }
-.pet.walk-left { animation: none; transform: scaleX(1); }
-.pet.walk-right { animation: none; transform: scaleX(-1); }
-.pet.dragging { animation: dangling .35s ease-in-out infinite alternate; }
-.pet.reacting { animation: react .55s cubic-bezier(.2,.9,.3,1.3); }
-
-.blink { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
-.heart { position: absolute; left: 54%; top: 18%; color: #e32956; font-size: 28px; opacity: 0; text-shadow: 0 2px 0 white; pointer-events: none; }
-.heart.pop { animation: heart 1s ease-out; }
+.pet.dragging { animation: dangling .35s ease-in-out infinite alternate !important; }
+.pet.expression-happy { animation: happy .7s cubic-bezier(.22,.8,.32,1); }
+.pet.expression-shy { animation: shy 1.8s ease-in-out infinite alternate; }
+.pet.expression-curious { animation: curious 1.4s ease-in-out infinite alternate; }
+.pet.expression-sleepy { animation: sleepy 3s ease-in-out infinite; }
+.pet.expression-sparkle { animation: poised 1.2s ease-out; }
+.pet.expression-yandere { animation: yandere-pulse 1.7s ease-in-out infinite; }
+.pet.expression-sleepy .pet-image-main { filter: saturate(.78) brightness(.95); }
 
 .bubble {
   position: absolute;
@@ -112,8 +116,13 @@ form button { padding: 7px 12px; border: 0; border-radius: 8px; color: white; ba
 
 @keyframes breathe { 0%,100% { transform: translateY(0); } 50% { transform: translateY(1px); } }
 @keyframes dangling { from { transform: rotate(-3deg) translateY(-2px); } to { transform: rotate(3deg) translateY(2px); } }
-@keyframes react { 0% { transform: scale(1); } 35% { transform: translateY(-14px) scale(1.06,.94); } 65% { transform: translateY(1px) scale(.96,1.04); } 100% { transform: scale(1); } }
-@keyframes heart { 0% { opacity: 0; transform: translateY(8px) scale(.5); } 25% { opacity: 1; transform: translateY(0) scale(1.15); } 100% { opacity: 0; transform: translateY(-38px) scale(.8); } }
+@keyframes happy { 0%,100% { transform: translateY(0) scale(1); } 38% { transform: translateY(-5px) scale(1.015); } }
+@keyframes shy { from { transform: rotate(-.7deg); } to { transform: rotate(.7deg); } }
+@keyframes curious { from { transform: rotate(0); } to { transform: rotate(1.8deg); } }
+@keyframes sleepy { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(2px) scale(.995); } }
+@keyframes poised { 0%,100% { transform: scale(1); } 45% { transform: scale(1.025); } }
+@keyframes yandere-pulse { 0%,100% { transform: scale(1); } 50% { transform: translateY(-1px) scale(1.012); } }
 @keyframes appear { from { opacity: 0; transform: translateY(5px) scale(.96); } }
 @keyframes panel-in { from { opacity: 0; transform: translateY(-8px) scale(.98); } }
-@media (prefers-reduced-motion: reduce) { .pet, .heart, .panel, .bubble { animation: none !important; } }
+@keyframes sprite-crossfade { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .pet, .pet-image-fade, .panel, .bubble { animation: none !important; } }

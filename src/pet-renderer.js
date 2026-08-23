@@ -1,90 +1,101 @@
 const pet = document.querySelector('#pet');
 const petImage = document.querySelector('#pet-image');
+const petImageFade = document.querySelector('#pet-image-fade');
 const bubble = document.querySelector('#bubble');
-const heart = document.querySelector('#heart');
+const idleSprite = 'assets/idle-v2.png';
+const expressionSprites = Object.freeze({
+  happy: 'assets/expressions/happy.png',
+  shy: 'assets/expressions/shy.png',
+  curious: 'assets/expressions/curious.png',
+  sleepy: 'assets/expressions/sleepy.png',
+  sparkle: 'assets/expressions/sparkle.png',
+  yandere: 'assets/expressions/yandere.png'
+});
+const expressionNames = Object.keys(expressionSprites);
 let pointerDown = false;
 let moved = false;
+let dragStarted = false;
 let startPoint = null;
 let activePointerId = null;
 let bubbleTimer;
-let walkFrame = 0;
-const idleFrame = 'assets/idle-v2.png';
-const walkFrames = Array.from({ length: 16 }, (_, index) => `assets/walk-16/walk-${String(index).padStart(2, '0')}.png`);
+let clickTimer;
 
-for (const source of [idleFrame, ...walkFrames]) {
+for (const source of [idleSprite, ...Object.values(expressionSprites)]) {
   const image = new Image();
   image.src = source;
 }
 
-function showWalkFrame(index) {
-  walkFrame = (index + walkFrames.length) % walkFrames.length;
-  petImage.src = walkFrames[walkFrame];
-}
-
-function setPetState(state) {
-  pet.classList.remove('idle', 'walk-left', 'walk-right', 'dragging');
-  const nextState = state || 'idle';
-  const walk = /^walk-(left|right)-(\d+)$/.exec(nextState);
-  if (walk) {
-    pet.classList.add(`walk-${walk[1]}`);
-    showWalkFrame(Number(walk[2]));
-    return;
-  }
-  pet.classList.add(nextState === 'dragging' ? 'dragging' : 'idle');
-  petImage.src = idleFrame;
+function crossfadeTo(source) {
+  if (petImage.getAttribute('src') === source) return;
+  petImageFade.src = petImage.src;
+  petImageFade.classList.remove('crossfade-out');
+  void petImageFade.offsetWidth;
+  petImage.src = source;
+  petImageFade.classList.add('crossfade-out');
 }
 
 function say(text, timeout = 4500) {
   clearTimeout(bubbleTimer);
-  bubble.textContent = text;
-  bubble.classList.remove('hidden');
-  bubbleTimer = setTimeout(() => bubble.classList.add('hidden'), timeout);
+  bubble.textContent = String(text || '');
+  bubble.classList.toggle('hidden', !bubble.textContent);
+  if (bubble.textContent) bubbleTimer = setTimeout(() => bubble.classList.add('hidden'), timeout);
 }
 
-function react() {
-  pet.classList.remove('reacting');
-  void pet.offsetWidth;
-  pet.classList.add('reacting');
-  heart.classList.remove('pop');
-  void heart.offsetWidth;
-  heart.classList.add('pop');
-  say(['嗯？我在这里。', '今天也要好好陪着我哦。', '不许悄悄溜走。', '要和我聊聊天吗？'][Math.floor(Math.random() * 4)]);
+function showExpression(expression) {
+  for (const name of expressionNames) pet.classList.remove(`expression-${name}`);
+  const name = expressionNames.includes(expression?.name) ? expression.name : 'happy';
+  pet.classList.add(`expression-${name}`);
+  crossfadeTo(expressionSprites[name]);
 }
 
 pet.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) return;
   pointerDown = true;
   moved = false;
+  dragStarted = false;
   activePointerId = event.pointerId;
   startPoint = { screenX: event.screenX, screenY: event.screenY };
   pet.setPointerCapture(event.pointerId);
-  window.petAPI.dragStart({ x: event.clientX, y: event.clientY });
 });
 
 pet.addEventListener('pointermove', (event) => {
   if (!pointerDown || event.pointerId !== activePointerId) return;
-  if (Math.hypot(event.screenX - startPoint.screenX, event.screenY - startPoint.screenY) > 5) moved = true;
+  if (!moved && Math.hypot(event.screenX - startPoint.screenX, event.screenY - startPoint.screenY) > 5) {
+    moved = true;
+    dragStarted = true;
+    window.petAPI.dragStart({ x: event.clientX, y: event.clientY });
+  }
 });
 
 function finishPointer(event, cancelled = false) {
   if (!pointerDown || (event?.pointerId !== undefined && event.pointerId !== activePointerId)) return;
   pointerDown = false;
   activePointerId = null;
-  window.petAPI.dragEnd();
-  if (!moved && !cancelled) react();
+  if (dragStarted) window.petAPI.dragEnd();
+  dragStarted = false;
+  if (!moved && !cancelled) {
+    clearTimeout(clickTimer);
+    clickTimer = setTimeout(() => window.petAPI.interact(), 220);
+  }
 }
 
 pet.addEventListener('pointerup', (event) => finishPointer(event));
 pet.addEventListener('pointercancel', (event) => finishPointer(event, true));
 document.addEventListener('pointerup', (event) => finishPointer(event));
 document.addEventListener('pointercancel', (event) => finishPointer(event, true));
-pet.addEventListener('dblclick', () => window.petAPI.openPanel('chat'));
+pet.addEventListener('lostpointercapture', (event) => finishPointer(event, true));
+window.addEventListener('blur', () => finishPointer(undefined, true));
+pet.addEventListener('dblclick', () => {
+  clearTimeout(clickTimer);
+  window.petAPI.openPanel('chat');
+});
 pet.addEventListener('contextmenu', (event) => {
   event.preventDefault();
   window.petAPI.openPanel('chat');
 });
 
-window.petAPI.onPetState(setPetState);
+window.petAPI.onPetExpression(showExpression);
+window.petAPI.onPetDragging((value) => pet.classList.toggle('dragging', value));
 window.petAPI.onPetSay(say);
 window.petAPI.onPetScale((scale) => document.documentElement.style.setProperty('--pet-scale', scale));
 

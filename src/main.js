@@ -2,37 +2,27 @@ const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, Notificati
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const { EXPRESSIONS, expressionByName, pickExpression } = require('./expressions');
 
 const BASE_PET_SIZE = { width: 210, height: 300 };
 const PET_WINDOW_EXTRA = { width: 16, height: 76 };
 const PANEL_SIZE = { width: 380, height: 520 };
-const STEP_MS = 33;
-const WALK_STEP_PIXELS = 1;
-const WALK_FRAME_COUNT = 16;
-const WALK_CYCLE_PIXELS = 48;
 let petWindow;
 let panelWindow;
 let tray;
-let motionTimer;
 let dragTimer;
 let reminderTimer;
-let walking = true;
-let direction = -1;
+let displayRecoveryTimer;
 let dragging = false;
 let dragOffset = { x: 0, y: 0 };
-let motionPhase = 'idle';
-let phaseEndsAt = 0;
-let preciseX = null;
-let walkDistance = 0;
-let currentWalkFrame = -1;
-let turnPending = false;
+let previousExpression = '';
+let interactionPending = false;
 let settings = {};
 let conversationHistory = [];
 
 const defaults = {
   alwaysOnTop: true,
   launchAtLogin: false,
-  walking: true,
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4.1-mini',
   persona: '你是用户的桌宠月下。性格温柔、亲近、略带俏皮和占有欲，会自然地关心用户。用中文简短回复，通常不超过三句话；不要声称自己能操作没有提供的系统功能。',
@@ -51,7 +41,8 @@ function loadSettings() {
     settings = { ...defaults };
   }
   if (settings.model === 'gpt-5.6-luna') settings.model = defaults.model;
-  walking = settings.walking;
+  delete settings.walking;
+  delete settings.quietMode;
 }
 
 function saveSettings() {
@@ -104,28 +95,52 @@ function clampPosition(x, y, referencePoint = null) {
   };
 }
 
-function showIdle() {
-  currentWalkFrame = -1;
-  petWindow?.webContents.send('pet:state', 'idle');
+function sendExpression(expression, speak = true) {
+  if (!petWindow || petWindow.isDestroyed() || petWindow.webContents.isDestroyed()) return;
+  previousExpression = expression.name;
+  petWindow.webContents.send('pet:expression', expression);
+  if (speak && expression.line) petWindow.webContents.send('pet:say', expression.line);
 }
 
-function showWalkFrame(force = false) {
-  const frame = Math.floor((walkDistance % WALK_CYCLE_PIXELS) / (WALK_CYCLE_PIXELS / WALK_FRAME_COUNT));
-  if (!force && frame === currentWalkFrame) return frame;
-  currentWalkFrame = frame;
-  petWindow?.webContents.send('pet:state', `walk-${direction < 0 ? 'left' : 'right'}-${frame}`);
-  return frame;
+function sendPetSay(message) {
+  if (!petWindow || petWindow.isDestroyed() || petWindow.webContents.isDestroyed()) return;
+  petWindow.webContents.send('pet:say', String(message || ''));
 }
 
-function enterIdle(duration) {
-  motionPhase = 'idle';
-  phaseEndsAt = Date.now() + duration;
-  showIdle();
+function showNamedExpression(name, speak = false) {
+  const expression = expressionByName(name);
+  sendExpression(expression, speak);
+  return expression;
 }
 
-function applyPetScale(value, persist = true) {
+function showRandomExpression(speak = true) {
+  const expression = pickExpression(previousExpression);
+  sendExpression(expression, speak);
+  return expression;
+}
+
+function recoverPetPosition() {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  if (dragging) {
+    followCursor();
+    return;
+  }
+  const bounds = petWindow.getBounds();
+  const position = clampPosition(bounds.x, bounds.y);
+  const nextX = Math.round(position.x);
+  const nextY = Math.round(position.y);
+  if (nextX !== bounds.x || nextY !== bounds.y) petWindow.setPosition(nextX, nextY, false);
+}
+
+function scheduleDisplayRecovery() {
+  clearTimeout(displayRecoveryTimer);
+  displayRecoveryTimer = setTimeout(() => {
+    recoverPetPosition();
+  }, 100);
+}
+
+function resizePetWindow(value) {
   const scale = normalizedScale(value);
-  settings.petScale = scale;
   if (petWindow && !petWindow.isDestroyed()) {
     const old = petWindow.getBounds();
     const size = windowSizeForScale(scale);
@@ -133,9 +148,13 @@ function applyPetScale(value, persist = true) {
     const x = Math.max(area.x, Math.min(old.x + old.width - size.width, area.x + area.width - size.width));
     const y = Math.max(area.y, Math.min(old.y + old.height - size.height, area.y + area.height - size.height));
     petWindow.setBounds({ x: Math.round(x), y: Math.round(y), ...size }, false);
-    preciseX = Math.round(x);
     petWindow.webContents.send('pet:scale', scale);
   }
+  return scale;
+}
+
+function applyPetScale(value, persist = true) {
+  settings.petScale = resizePetWindow(value);
   if (persist) saveSettings();
 }
 
@@ -143,33 +162,34 @@ function stopDragging() {
   if (!dragging) return;
   dragging = false;
   clearInterval(dragTimer);
-  dragTimer = null;
-  const bounds = petWindow?.getBounds();
-  preciseX = bounds?.x ?? null;
-  enterIdle(1600);
+  dragTimer = undefined;
+  if (petWindow && !petWindow.isDestroyed() && !petWindow.webContents.isDestroyed()) {
+    petWindow.webContents.send('pet:dragging', false);
+  }
 }
 
 function startDragging(point) {
-  if (!petWindow) return;
-  clearInterval(dragTimer);
+  if (!petWindow || petWindow.isDestroyed()) return;
+  if (dragging) return;
   dragging = true;
-  motionPhase = 'idle';
-  currentWalkFrame = -1;
-  dragOffset = { x: Number(point?.x) || 0, y: Number(point?.y) || 0 };
-  petWindow.webContents.send('pet:state', 'dragging');
-
-  const followCursor = () => {
-    if (!dragging || !petWindow || petWindow.isDestroyed()) return;
-    const cursor = screen.getCursorScreenPoint();
-    const pos = clampPosition(cursor.x - dragOffset.x, cursor.y - dragOffset.y, cursor);
-    const bounds = petWindow.getBounds();
-    const nextX = Math.round(pos.x);
-    const nextY = Math.round(pos.y);
-    if (nextX !== bounds.x || nextY !== bounds.y) petWindow.setPosition(nextX, nextY, false);
+  const bounds = petWindow.getBounds();
+  dragOffset = {
+    x: Math.max(0, Math.min(Number(point?.x) || 0, bounds.width)),
+    y: Math.max(0, Math.min(Number(point?.y) || 0, bounds.height))
   };
-
+  petWindow.webContents.send('pet:dragging', true);
   followCursor();
   dragTimer = setInterval(followCursor, 16);
+}
+
+function followCursor() {
+  if (!dragging || !petWindow || petWindow.isDestroyed()) return;
+  const cursor = screen.getCursorScreenPoint();
+  const pos = clampPosition(cursor.x - dragOffset.x, cursor.y - dragOffset.y, cursor);
+  const bounds = petWindow.getBounds();
+  const nextX = Math.round(pos.x);
+  const nextY = Math.round(pos.y);
+  if (nextX !== bounds.x || nextY !== bounds.y) petWindow.setPosition(nextX, nextY, false);
 }
 
 function createPetWindow() {
@@ -192,13 +212,15 @@ function createPetWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      backgroundThrottling: false
     }
   });
   petWindow.setMenuBarVisibility(false);
-  petWindow.loadFile(path.join(__dirname, 'pet.html'));
-  petWindow.once('ready-to-show', () => {
+  petWindow.webContents.on('did-finish-load', () => {
     petWindow.webContents.send('pet:scale', normalizedScale(settings.petScale));
+  });
+  petWindow.once('ready-to-show', () => {
     petWindow.showInactive();
   });
   petWindow.on('close', (event) => {
@@ -207,22 +229,40 @@ function createPetWindow() {
       petWindow.hide();
     }
   });
+  petWindow.on('hide', () => {
+    if (dragging) stopDragging();
+    refreshTrayMenu();
+  });
+  petWindow.on('show', () => {
+    recoverPetPosition();
+    refreshTrayMenu();
+  });
   petWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url);
     return { action: 'deny' };
   });
   petWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+  petWindow.webContents.on('render-process-gone', () => {
+    if (dragging) stopDragging();
+  });
   petWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  petWindow.loadFile(path.join(__dirname, 'pet.html'));
 }
 
 function createPanelWindow() {
   panelWindow = new BrowserWindow({
     ...PANEL_SIZE,
+    minWidth: PANEL_SIZE.width,
+    maxWidth: PANEL_SIZE.width,
+    minHeight: PANEL_SIZE.height,
+    maxHeight: PANEL_SIZE.height,
     show: false,
     frame: false,
     resizable: false,
     maximizable: false,
     minimizable: false,
+    fullscreenable: false,
+    useContentSize: true,
     alwaysOnTop: settings.alwaysOnTop,
     skipTaskbar: false,
     backgroundColor: '#241025',
@@ -230,20 +270,24 @@ function createPanelWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      zoomFactor: 1
     }
   });
   panelWindow.setMenuBarVisibility(false);
   panelWindow.loadFile(path.join(__dirname, 'index.html'));
+  panelWindow.webContents.on('did-finish-load', () => {
+    panelWindow.webContents.setZoomFactor(1);
+    panelWindow.webContents.setVisualZoomLevelLimits(1, 1);
+  });
+  panelWindow.on('will-resize', (event) => event.preventDefault());
   panelWindow.on('close', (event) => {
     if (!app.isQuitting) {
       event.preventDefault();
       panelWindow.hide();
     }
   });
-  panelWindow.on('hide', () => {
-    enterIdle(1600);
-  });
+  panelWindow.on('hide', () => resizePetWindow(settings.petScale));
   panelWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url);
     return { action: 'deny' };
@@ -256,7 +300,15 @@ function refreshTrayMenu() {
   if (!tray) return;
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: petWindow?.isVisible() ? '藏起月下' : '唤醒月下', click: () => petWindow?.isVisible() ? petWindow.hide() : petWindow.showInactive() },
-    { label: walking ? '暂停散步' : '继续散步', click: () => setWalking(!walking) },
+    { label: '换个表情', click: () => { petWindow?.showInactive(); showRandomExpression(false); } },
+    {
+      label: '指定表情',
+      submenu: EXPRESSIONS.map((expression) => ({
+        label: expression.label,
+        click: () => { petWindow?.showInactive(); showNamedExpression(expression.name, false); }
+      }))
+    },
+    { label: '让月下说句话', click: () => { petWindow?.showInactive(); void handlePetInteraction(); } },
     { label: '打开聊天与提醒', click: () => openPanel('chat') },
     { label: '设置提醒', click: () => openPanel('reminders') },
     { type: 'separator' },
@@ -280,23 +332,11 @@ function openPanel(tab = 'chat') {
   const area = activeWorkArea();
   const x = Math.round(area.x + (area.width - PANEL_SIZE.width) / 2);
   const y = Math.round(area.y + (area.height - PANEL_SIZE.height) / 2);
-  panelWindow.setPosition(x, y, false);
+  panelWindow.setBounds({ x, y, ...PANEL_SIZE }, false);
+  panelWindow.webContents.setZoomFactor(1);
   panelWindow.show();
   panelWindow.focus();
   panelWindow.webContents.send('panel:open', tab);
-  enterIdle(1600);
-}
-
-function setWalking(value) {
-  walking = Boolean(value);
-  settings.walking = walking;
-  motionPhase = 'idle';
-  phaseEndsAt = walking ? Date.now() + 1800 : Infinity;
-  preciseX = petWindow?.getBounds().x ?? null;
-  walkDistance = 0;
-  saveSettings();
-  showIdle();
-  refreshTrayMenu();
 }
 
 function setAlwaysOnTop(value) {
@@ -312,56 +352,6 @@ function setLaunchAtLogin(value) {
   app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin, path: process.execPath });
   saveSettings();
   refreshTrayMenu();
-}
-
-function startMotion() {
-  clearInterval(motionTimer);
-  motionPhase = 'idle';
-  phaseEndsAt = Date.now() + 2200;
-  preciseX = petWindow?.getBounds().x ?? null;
-  walkDistance = 0;
-  showIdle();
-  motionTimer = setInterval(() => {
-    const now = Date.now();
-    if (!petWindow || !petWindow.isVisible() || panelWindow?.isVisible() || dragging || !walking) return;
-
-    if (now >= phaseEndsAt) {
-      if (motionPhase === 'idle') {
-        motionPhase = 'walking';
-        if (turnPending) turnPending = false;
-        else if (Math.random() < 0.28) direction *= -1;
-        phaseEndsAt = now + 9000 + Math.random() * 9000;
-        preciseX = petWindow.getBounds().x;
-        walkDistance = 0;
-        showWalkFrame(true);
-      } else if (motionPhase === 'walking') {
-        motionPhase = 'stopping';
-        phaseEndsAt = Infinity;
-      }
-    }
-    if (motionPhase !== 'walking' && motionPhase !== 'stopping') return;
-
-    const bounds = petWindow.getBounds();
-    const area = activeWorkArea();
-    const minX = area.x;
-    const maxX = area.x + area.width - bounds.width;
-    if (preciseX === null) preciseX = bounds.x;
-    preciseX += direction * WALK_STEP_PIXELS;
-    if (preciseX <= minX || preciseX >= maxX) {
-      preciseX = Math.max(minX, Math.min(preciseX, maxX));
-      direction *= -1;
-      turnPending = true;
-      enterIdle(650);
-      return;
-    }
-    const nextX = Math.round(preciseX);
-    if (nextX !== bounds.x) petWindow.setPosition(nextX, bounds.y, false);
-    walkDistance = (walkDistance + WALK_STEP_PIXELS) % WALK_CYCLE_PIXELS;
-    const frame = showWalkFrame();
-    if (motionPhase === 'stopping' && (frame === 0 || frame === WALK_FRAME_COUNT / 2)) {
-      enterIdle(4500 + Math.random() * 5500);
-    }
-  }, STEP_MS);
 }
 
 function scheduleReminders() {
@@ -401,13 +391,13 @@ function extractChatText(data) {
   return '';
 }
 
-async function askAI(message) {
+async function askAI(message, { remember = true } = {}) {
   const apiKey = decryptSecret(settings.apiKey);
   const endpoint = chatCompletionsUrl(settings.baseUrl);
   const systemMessage = settings.persona?.trim() || defaults.persona;
   const messages = [
     { role: 'system', content: systemMessage },
-    ...conversationHistory.slice(-12),
+    ...(remember ? conversationHistory.slice(-12) : []),
     { role: 'user', content: message }
   ];
   const body = {
@@ -439,24 +429,84 @@ async function askAI(message) {
   if (!response.ok) throw new Error(data?.error?.message || raw.slice(0, 180) || `请求失败 (${response.status})`);
   const answer = extractChatText(data);
   if (!answer) throw new Error('AI 服务返回了无法识别的响应格式');
-  conversationHistory = [...conversationHistory, { role: 'user', content: message }, { role: 'assistant', content: answer }].slice(-12);
+  if (remember) {
+    conversationHistory = [...conversationHistory, { role: 'user', content: message }, { role: 'assistant', content: answer }].slice(-12);
+  }
   return answer;
 }
 
+function hasConfiguredAI() {
+  return Boolean(settings.apiKey)
+    || settings.baseUrl !== defaults.baseUrl
+    || settings.model !== defaults.model;
+}
+
+function interactionContext(expression) {
+  const now = new Date();
+  const localTime = new Intl.DateTimeFormat('zh-CN', {
+    weekday: 'long',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(now);
+  const upcoming = (settings.reminders || [])
+    .filter((reminder) => !reminder.done && new Date(reminder.when).getTime() > now.getTime())
+    .sort((a, b) => new Date(a.when) - new Date(b.when))[0];
+  const reminderContext = upcoming
+    ? `用户最近的一项待办提醒是“${upcoming.text}”。`
+    : '当前没有即将到来的本地提醒。';
+  return [
+    '这是桌宠被用户单击后的即时互动，不是聊天面板中的正式提问。',
+    `当前本地时间是${localTime}，你此刻表现出的情绪是“${expression.label}”。`,
+    reminderContext,
+    '请结合时间、情绪和被用户轻点这件事，以月下的人设直接回应一句自然中文。',
+    '只输出会说出口的话，不要解释、不加引号或动作括号，控制在10到40个汉字，并尽量避免与之前固定台词相同。'
+  ].join('\n');
+}
+
+async function handlePetInteraction() {
+  if (interactionPending || dragging) return;
+  const expression = showRandomExpression(false);
+  if (!hasConfiguredAI()) {
+    sendPetSay(expression.line);
+    return;
+  }
+  interactionPending = true;
+  sendPetSay('让我想想……');
+  try {
+    const answer = await askAI(interactionContext(expression), { remember: false });
+    sendPetSay(answer);
+  } catch (error) {
+    console.error('Pet interaction AI failed:', error);
+    sendPetSay(`API 暂时没有回应。${expression.line}`);
+  } finally {
+    interactionPending = false;
+  }
+}
+
 function registerIpc() {
-  ipcMain.on('drag:start', (_event, point) => startDragging(point));
-  ipcMain.on('drag:end', stopDragging);
-  ipcMain.on('mouse:passthrough', (_event, ignore) => {
+  ipcMain.on('drag:start', (event, point) => {
+    if (event.sender === petWindow?.webContents) startDragging(point);
+  });
+  ipcMain.on('drag:end', (event) => {
+    if (event.sender === petWindow?.webContents) stopDragging();
+  });
+  ipcMain.on('pet:interact', (event) => {
+    if (event.sender === petWindow?.webContents) void handlePetInteraction();
+  });
+  ipcMain.on('mouse:passthrough', (event, ignore) => {
+    if (event.sender !== petWindow?.webContents) return;
     petWindow?.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
   });
   ipcMain.on('panel:open-request', (_event, tab) => openPanel(tab));
   ipcMain.on('pet:say-request', (_event, message) => petWindow?.webContents.send('pet:say', String(message || '')));
   ipcMain.on('panel:toggle', () => panelWindow?.isVisible() ? panelWindow.hide() : openPanel('chat'));
   ipcMain.on('panel:close', () => panelWindow?.hide());
+  ipcMain.on('pet:scale-preview', (event, value) => {
+    if (event.sender === panelWindow?.webContents) resizePetWindow(value);
+  });
   ipcMain.handle('settings:get', () => ({
     alwaysOnTop: settings.alwaysOnTop,
     launchAtLogin: settings.launchAtLogin,
-    walking: settings.walking,
     baseUrl: settings.baseUrl,
     model: settings.model,
     persona: settings.persona || defaults.persona,
@@ -475,7 +525,6 @@ function registerIpc() {
     if (typeof next.persona === 'string') settings.persona = next.persona.trim() || defaults.persona;
     if (typeof next.alwaysOnTop === 'boolean') setAlwaysOnTop(next.alwaysOnTop);
     if (typeof next.launchAtLogin === 'boolean') setLaunchAtLogin(next.launchAtLogin);
-    if (typeof next.walking === 'boolean') setWalking(next.walking);
     if (next.petScale !== undefined) applyPetScale(next.petScale, false);
     conversationHistory = [];
     saveSettings();
@@ -508,17 +557,19 @@ app.whenReady().then(() => {
   createPetWindow();
   createPanelWindow();
   createTray();
+  screen.on('display-added', scheduleDisplayRecovery);
+  screen.on('display-removed', scheduleDisplayRecovery);
+  screen.on('display-metrics-changed', scheduleDisplayRecovery);
   setLaunchAtLogin(settings.launchAtLogin);
-  startMotion();
   scheduleReminders();
 });
 
 app.on('window-all-closed', () => {});
 app.on('before-quit', () => {
   app.isQuitting = true;
-  clearInterval(motionTimer);
   clearInterval(dragTimer);
   clearTimeout(reminderTimer);
+  clearTimeout(displayRecoveryTimer);
 });
 
 const singleInstance = app.requestSingleInstanceLock();

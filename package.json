@@ -1,6 +1,6 @@
 {
   "name": "lunar-vow-desktop-pet",
-  "version": "0.3.0",
+  "version": "0.5.1",
   "description": "月下誓约 Windows 独立桌宠",
   "main": "src/main.js",
   "author": "OpenAI Codex",
@@ -8,7 +8,9 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check src/pet-renderer.js",
+    "check": "node --check src/main.js && node --check src/expressions.js && node --check src/preload.js && node --check src/renderer.js && node --check src/pet-renderer.js",
+    "check:assets": "node tools/check-expression-assets.mjs",
+    "test": "node --test",
     "assets": "node tools/extract-alpha.mjs generated_images/exec-6c6c82ba-785e-41d5-852a-b957d4ff6b58.png src/assets/pet-master.png && node tools/make-assets.mjs",
     "package:win": "node tools/package-win.mjs"
   },
