@@ -4,6 +4,7 @@ const petImageFade = document.querySelector('#pet-image-fade');
 const bubble = document.querySelector('#bubble');
 const idleSprite = 'assets/idle-v2.png';
 const expressionSprites = Object.freeze({
+  idle: idleSprite,
   happy: 'assets/expressions/happy.png',
   shy: 'assets/expressions/shy.png',
   curious: 'assets/expressions/curious.png',
@@ -36,15 +37,21 @@ function crossfadeTo(source) {
 
 function say(text, timeout = 4500) {
   clearTimeout(bubbleTimer);
-  bubble.textContent = String(text || '');
+  const message = String(text || '').trim();
+  bubble.textContent = message;
   bubble.classList.toggle('hidden', !bubble.textContent);
-  if (bubble.textContent) bubbleTimer = setTimeout(() => bubble.classList.add('hidden'), timeout);
+  bubble.scrollTop = 0;
+  if (bubble.textContent) {
+    const readingTime = Math.max(timeout, Math.min(30000, 4000 + [...message].length * 120));
+    bubbleTimer = setTimeout(() => bubble.classList.add('hidden'), readingTime);
+  }
 }
 
 function showExpression(expression) {
   for (const name of expressionNames) pet.classList.remove(`expression-${name}`);
-  const name = expressionNames.includes(expression?.name) ? expression.name : 'happy';
-  pet.classList.add(`expression-${name}`);
+  const name = expressionNames.includes(expression?.name) ? expression.name : 'idle';
+  pet.classList.toggle('idle', name === 'idle');
+  if (name !== 'idle') pet.classList.add(`expression-${name}`);
   crossfadeTo(expressionSprites[name]);
 }
 
@@ -101,7 +108,7 @@ window.petAPI.onPetScale((scale) => document.documentElement.style.setProperty('
 
 document.addEventListener('mousemove', (event) => {
   if (pointerDown) return;
-  window.petAPI.setMousePassthrough(!event.target.closest('#pet'));
+  window.petAPI.setMousePassthrough(!event.target.closest('#pet, #bubble'));
 });
 document.addEventListener('mouseleave', () => {
   if (!pointerDown) window.petAPI.setMousePassthrough(true);

@@ -2,11 +2,11 @@ const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, Notificati
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const { EXPRESSIONS, expressionByName, pickExpression } = require('./expressions');
+const { EXPRESSIONS, expressionByName, createExpressionPicker } = require('./expressions');
+const { normalizedScale, windowSizeForScale } = require('./pet-layout');
 
-const BASE_PET_SIZE = { width: 210, height: 300 };
-const PET_WINDOW_EXTRA = { width: 16, height: 76 };
 const PANEL_SIZE = { width: 380, height: 520 };
+const pickNextExpression = createExpressionPicker();
 let petWindow;
 let panelWindow;
 let tray;
@@ -70,18 +70,6 @@ function activeWorkArea() {
   return screen.getDisplayMatching(petWindow.getBounds()).workArea;
 }
 
-function normalizedScale(value) {
-  return Math.max(0.5, Math.min(Number(value) || 1, 1.5));
-}
-
-function windowSizeForScale(value) {
-  const scale = normalizedScale(value);
-  return {
-    width: Math.ceil(BASE_PET_SIZE.width * scale + PET_WINDOW_EXTRA.width),
-    height: Math.ceil(BASE_PET_SIZE.height * scale + PET_WINDOW_EXTRA.height)
-  };
-}
-
 function clampPosition(x, y, referencePoint = null) {
   const bounds = petWindow?.getBounds() || windowSizeForScale(settings.petScale);
   const display = screen.getDisplayNearestPoint(referencePoint || {
@@ -114,7 +102,7 @@ function showNamedExpression(name, speak = false) {
 }
 
 function showRandomExpression(speak = true) {
-  const expression = pickExpression(previousExpression);
+  const expression = pickNextExpression(previousExpression);
   sendExpression(expression, speak);
   return expression;
 }

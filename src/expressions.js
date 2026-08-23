@@ -1,5 +1,11 @@
 const EXPRESSIONS = Object.freeze([
   Object.freeze({
+    name: 'idle',
+    label: '待机',
+    symbol: '·',
+    line: '就这样安静地陪着你，也很好。'
+  }),
+  Object.freeze({
     name: 'happy',
     label: '开心',
     symbol: '♥',
@@ -41,11 +47,37 @@ function expressionByName(name) {
   return EXPRESSIONS.find((expression) => expression.name === name) || EXPRESSIONS[0];
 }
 
-function pickExpression(previousName = '', random = Math.random) {
-  const choices = EXPRESSIONS.filter((expression) => expression.name !== previousName);
+function randomIndex(length, random) {
   const value = Number(random());
   const normalized = Number.isFinite(value) ? Math.max(0, Math.min(value, 0.999999999)) : 0;
-  return choices[Math.floor(normalized * choices.length)];
+  return Math.floor(normalized * length);
 }
 
-module.exports = { EXPRESSIONS, expressionByName, pickExpression };
+function shuffledExpressions(random) {
+  const bag = [...EXPRESSIONS];
+  for (let index = bag.length - 1; index > 0; index -= 1) {
+    const swapIndex = randomIndex(index + 1, random);
+    [bag[index], bag[swapIndex]] = [bag[swapIndex], bag[index]];
+  }
+  return bag;
+}
+
+function createExpressionPicker(random = Math.random) {
+  let bag = [];
+  return function pickExpression(previousName = '') {
+    if (bag.length === 0) bag = shuffledExpressions(random);
+    let nextIndex = bag.findIndex((expression) => expression.name !== previousName);
+    if (nextIndex === -1) {
+      bag = shuffledExpressions(random);
+      nextIndex = bag.findIndex((expression) => expression.name !== previousName);
+    }
+    [bag[0], bag[nextIndex]] = [bag[nextIndex], bag[0]];
+    return bag.shift();
+  };
+}
+
+function pickExpression(previousName = '', random = Math.random) {
+  return createExpressionPicker(random)(previousName);
+}
+
+module.exports = { EXPRESSIONS, expressionByName, createExpressionPicker, pickExpression };
