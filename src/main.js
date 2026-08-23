@@ -471,7 +471,6 @@ async function handlePetInteraction() {
     return;
   }
   interactionPending = true;
-  sendPetSay('让我想想……');
   try {
     const answer = await askAI(interactionContext(expression), { remember: false });
     sendPetSay(answer);
