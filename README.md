@@ -2,13 +2,29 @@
 
 一个独立运行的 Windows 桌宠原型。包含透明置顶窗口、情绪表情、点击/拖拽互动、托盘常驻、开机自启、本地提醒和 OpenAI 兼容 API 对话。
 
-## 下载 Windows 版
+## 普通用户下载安装
 
-打开本仓库右侧的 **Releases**，下载最新的 `LunarVowPet-Windows-x64-*.zip`。完整解压后运行 `LunarVowPet.exe`，不需要安装 Node.js。
+把本仓库地址分享给其他人即可。使用者不需要安装 Git、Node.js 或 npm，也不需要下载源码：
 
-## 直接运行
+1. 打开仓库右侧的 **Releases**，或直接进入 [Latest Release](https://github.com/LunarTHeresa/LunarVowPet/releases/latest)。
+2. 展开最新版本下方的 **Assets**，下载 `LunarVowPet-Windows-x64-v*.zip`。不要下载 GitHub 自动提供的 `Source code (zip)` 或 `Source code (tar.gz)`，那两项只有源码，没有可直接运行的程序。
+3. 右键下载到的 ZIP，选择“全部解压”。不要直接在压缩包预览窗口中运行，也不要只把 `LunarVowPet.exe` 单独复制出来；它需要同目录的 `resources`、DLL 等文件。
+4. 进入解压后的 `LunarVowPet-win32-x64` 文件夹，双击 `LunarVowPet.exe`。
+5. 第一次运行时 Windows 可能显示 SmartScreen，因为这是未购买代码签名证书的个人构建；选择“更多信息 → 仍要运行”即可。
 
-解压发布包，双击 `LunarVowPet.exe`。第一次运行时 Windows 可能显示 SmartScreen，因为这是未购买代码签名证书的个人构建；选择“更多信息 → 仍要运行”即可。
+目前发布包面向 64 位 Windows。需要更新时，先从托盘菜单退出旧版本，再下载并完整解压新的 Release；设置和 API 配置保存在 Windows 用户数据目录中，不在程序文件夹内，因此正常更新不会丢失。
+
+## 第一次使用与 API
+
+API 不是启动桌宠的必需项。不填写 API 时，表情、拖拽、提醒等本地功能都能使用，单击月下会回复内置台词。需要 AI 回复时：
+
+1. 双击或右键月下，打开聊天与设置面板。
+2. 在设置中选择 OpenAI、DeepSeek、Google Gemini，或填写其他 OpenAI Chat Completions 兼容服务。
+3. 填写自己的 Base URL、模型名和 API Key，然后保存。
+
+每位使用者都应填写自己的 API Key。仓库和 Release 发布包不包含作者或其他人的密钥；API Key 会通过 Electron `safeStorage` 使用 Windows 系统能力加密后保存在当前用户的本机数据目录，不会写进程序源码或发布包。请勿把自己的本机配置文件分享给其他人。
+
+## 基本操作
 
 - 单击角色：随机切换整套表情动作；配置 API 后由 AI 根据当前时间、情绪和提醒即时回应，未配置时使用本地台词
 - 拖动角色：角色会稳定跟随系统光标，松手后停在放置位置
